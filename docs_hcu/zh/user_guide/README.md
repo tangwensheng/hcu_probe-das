@@ -9,6 +9,11 @@ hcuProbe针对hcu提供全场景精度调试能力，覆盖数据采集、精度
 | 精度比对 | 将采集到的精度数据进行比对，定位出现精度差异的网络层/算子 | [PyTorch 精度比对](accuracy_compare/pytorch_accuracy_compare_instruct.md) |
 | 可视化 | 解析 dump 数据还原模型图结构，分级可视化定位精度差异 | [分级可视化构图比对](accuracy_compare/pytorch_visualization_instruct.md) |
 
+## 训练框架接入
+| 框架 | 功能说明 | 快速入口 |
+|---|---|---|
+| Megatron-Bridge | 不修改 Bridge 仓库，用进程内 overlay 挂载 dump/monitor（含 gemma3 示例） | [Megatron-Bridge 接入](megatron_bridge_instruct.md) |
+
 ## 离线分析
 [离线分析](offline_analysis/README.md) 
 
