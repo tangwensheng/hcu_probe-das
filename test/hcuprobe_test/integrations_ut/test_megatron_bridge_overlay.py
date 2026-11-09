@@ -285,6 +285,49 @@ def test_prepare_sys_path_adds_nested_megatron_lm(tmp_path):
         sys.path[:] = saved
 
 
+def test_patch_manager_compat_hides_uninitialized_nvdlfw(monkeypatch):
+    from hcuprobe.integrations.megatron_bridge import launcher
+
+    bridge_package = types.ModuleType("hcu_megatron_bridge")
+    bridge_package.__path__ = []
+    patch_utils = types.ModuleType("hcu_megatron_bridge.patch_utils")
+    seen = []
+
+    def scan_modules_like_bridge():
+        for module in sys.modules.copy().values():
+            hasattr(module, "_hcu_probe_missing")
+
+    class MegatronPatchesManager:
+        @staticmethod
+        def apply_patches():
+            scan_modules_like_bridge()
+            seen.append(("apply", "nvdlfw_inspect.api" in sys.modules))
+
+        @staticmethod
+        def remove_patches():
+            scan_modules_like_bridge()
+            seen.append(("remove", "nvdlfw_inspect.api" in sys.modules))
+
+    patch_utils.MegatronPatchesManager = MegatronPatchesManager
+    monkeypatch.setitem(sys.modules, "hcu_megatron_bridge", bridge_package)
+    monkeypatch.setitem(sys.modules, "hcu_megatron_bridge.patch_utils", patch_utils)
+
+    nvdlfw_api = types.ModuleType("nvdlfw_inspect.api")
+
+    def uninitialized_getattr(name):
+        raise RuntimeError("Debug manager not initialized")
+
+    nvdlfw_api.__getattr__ = uninitialized_getattr
+    monkeypatch.setitem(sys.modules, "nvdlfw_inspect.api", nvdlfw_api)
+
+    launcher._install_patch_manager_compat()
+    MegatronPatchesManager.apply_patches()
+    MegatronPatchesManager.remove_patches()
+
+    assert seen == [("apply", False), ("remove", False)]
+    assert sys.modules["nvdlfw_inspect.api"] is nvdlfw_api
+
+
 def test_grad_acc_steps_from_probe_args():
     from hcuprobe.integrations.megatron.config import compute_grad_acc_steps
     from hcuprobe.integrations.megatron_bridge import adapter
