@@ -145,6 +145,55 @@ def _prepare_sys_path(bridge_root: Optional[Path]) -> None:
             sys.path.insert(0, text)
 
 
+_PATCH_MANAGER_COMPAT_SENTINEL = "_hcu_probe_nvdlfw_compat"
+_PATCH_MANAGER_COMPAT_METHODS = ("apply_patches", "remove_patches")
+
+
+def _without_nvdlfw_inspect(operation):
+    """Run an operation while the uninitialized nvdlfw module is hidden."""
+    isolated: Dict[str, object] = {}
+    for name in list(sys.modules):
+        if name == "nvdlfw_inspect" or name.startswith("nvdlfw_inspect."):
+            isolated[name] = sys.modules.pop(name)
+    try:
+        return operation()
+    finally:
+        for name in list(sys.modules):
+            if name == "nvdlfw_inspect" or name.startswith("nvdlfw_inspect."):
+                sys.modules.pop(name, None)
+        sys.modules.update(isolated)
+
+
+def _install_patch_manager_compat() -> None:
+    """Keep Bridge patch scans away from nvdlfw's uninitialized module.
+
+    ``nvdlfw_inspect.api`` implements module-level ``__getattr__`` that raises
+    ``RuntimeError`` before ``initialize()``. Bridge's patch manager probes
+    every imported module with ``hasattr``, so the uninitialized module aborts
+    the whole patching pass instead of reporting a missing attribute.
+
+    Temporarily hide the module from ``sys.modules`` while Bridge applies its
+    patches, then restore it. Existing references in Bridge's tensor-inspect
+    module remain valid, so explicit NVIDIA tensor inspection can still be
+    initialized later.
+    """
+    try:
+        from hcu_megatron_bridge.patch_utils import MegatronPatchesManager
+    except (ImportError, ModuleNotFoundError):
+        return
+
+    for method_name in _PATCH_MANAGER_COMPAT_METHODS:
+        original = getattr(MegatronPatchesManager, method_name, None)
+        if original is None or getattr(original, _PATCH_MANAGER_COMPAT_SENTINEL, False):
+            continue
+
+        def wrapped(*args, __original=original, **kwargs):
+            return _without_nvdlfw_inspect(lambda: __original(*args, **kwargs))
+
+        setattr(wrapped, _PATCH_MANAGER_COMPAT_SENTINEL, True)
+        setattr(MegatronPatchesManager, method_name, staticmethod(wrapped))
+
+
 def _import_run_recipe(bridge_root: Optional[Path]):
     try:
         return importlib.import_module("run_recipe")
@@ -193,6 +242,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     bridge_root = options.get("bridge_root")
     resolved_root = Path(str(bridge_root)).expanduser().resolve() if bridge_root else _autodetect_bridge_root()
     _prepare_sys_path(resolved_root)
+    _install_patch_manager_compat()
 
     _export_options(options)
     install()
