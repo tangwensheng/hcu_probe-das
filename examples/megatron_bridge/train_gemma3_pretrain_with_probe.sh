@@ -30,6 +30,8 @@ export LOCAL_HF_PATH=${LOCAL_HF_PATH:-/path/to/gemma-3-1b-it}
 export GPU_MAX_HW_QUEUES=${GPU_MAX_HW_QUEUES:-4}
 export NVTE_USE_HIPBLASLT_GROUPEDGEMM=${NVTE_USE_HIPBLASLT_GROUPEDGEMM:-1}
 
+source "${CURRENT_DIR}/source_bridge_env.sh"
+
 RECIPE=${1:-}
 MODE=${2:-}
 HOSTFILE=${3:-}
@@ -137,7 +139,7 @@ echo "======================================"
 case "${MODE}" in
     dryrun)
         source /opt/dtk/env.sh
-        source "${MEGATRON_PATH}/env/env.sh"
+        source_bridge_env "${MEGATRON_PATH}"
         export PYTHONPATH="${HCU_PROBE_ROOT}/python:${PYTHONPATH:-}"
         python -m hcuprobe.integrations.megatron_bridge.launcher \
             "${LAUNCH_ARGS[@]}" \
@@ -153,7 +155,7 @@ case "${MODE}" in
         )
         if (( NNODES == 1 )); then
             source /opt/dtk/env.sh
-            source "${MEGATRON_PATH}/env/env.sh"
+            source_bridge_env "${MEGATRON_PATH}"
             export PYTHONPATH="${HCU_PROBE_ROOT}/python:${PYTHONPATH:-}"
             torchrun "${TORCHRUN_ARGS[@]}" \
                 -m hcuprobe.integrations.megatron_bridge.launcher \
@@ -176,7 +178,8 @@ case "${MODE}" in
                 -x MASTER_ADDR="${MASTER_ADDR}" -x MASTER_PORT="${MASTER_PORT}" \
                 bash -c "
                 source /opt/dtk/env.sh && \
-                source ${MEGATRON_PATH}/env/env.sh && \
+                source ${CURRENT_DIR}/source_bridge_env.sh && \
+                source_bridge_env ${MEGATRON_PATH} && \
                 export PYTHONPATH=${HCU_PROBE_ROOT}/python:\${PYTHONPATH:-} && \
                 ${REMOTE_CMD}" 2>&1 | tee "${SAVE_DIR}/train_logs/mpi_$(date +%F-%H%M).log"
         fi
