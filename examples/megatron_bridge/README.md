@@ -6,190 +6,225 @@
 
 ---
 
-## 快速开始
+## 目录结构
 
-### 1. 准备配置文件
-
-复制模板并修改输出路径为**绝对路径**：
-
-```bash
-cd /public/home/tangwsh/myproject/hcu_probe-das
-cp .claude/skills/hcu_probe-megatron-integration/config/hcu_probe_config_statistics_L0.json /tmp/my_L0.json
-cp .claude/skills/hcu_probe-megatron-integration/config/monitor_v2_config_full_probe.json /tmp/my_monitor.json
-
-# 编辑 /tmp/my_L0.json，把 dump_path 改成：
-#   "dump_path": "/public/home/tangwsh/probe_output/statistics_L0"
-# 编辑 /tmp/my_monitor.json，把 output_dir 改成：
-#   "output_dir": "/public/home/tangwsh/probe_output/monitor_v2"
 ```
-
-**重要**：输出路径必须是绝对路径，因为 Bridge 会 `chdir` 到自己的目录。
-
-### 2. 运行训练（单机 8 卡示例）
-
-```bash
-export MEGATRON_PATH=/public/home/tangwsh/myproject/Megatron-bridge-das
-export HCU_PROBE_CONFIG=/tmp/my_L0.json
-export HCU_PROBE_MONITOR_CONFIG=/tmp/my_monitor.json
-
-cd /public/home/tangwsh/myproject/hcu_probe-das/examples/megatron_bridge
-
-# 先 dryrun 检查配置
-./train_gemma3_pretrain_with_probe.sh gemma3_1b_pretrain_8gpu_bw1000_bf16_config dryrun
-
-# 确认无误后正式训练（默认 50 步，可用 TRAIN_ITERS=5 改小）
-TRAIN_ITERS=5 ./train_gemma3_pretrain_with_probe.sh gemma3_1b_pretrain_8gpu_bw1000_bf16_config train
-```
-
-### 3. 查看输出
-
-```bash
-ls /public/home/tangwsh/probe_output/statistics_L0/step0/rank0/dump.json
-ls /public/home/tangwsh/probe_output/monitor_v2/weight_grad_rank0.csv
-ls /public/home/tangwsh/probe_output/statistics_L0/loss_tracking/
+examples/megatron_bridge/
+├── run_with_probe.sh                 # 通用入口：参数解析、启动前检查、单机/多机拉起
+├── train_gemma3_pretrain_with_probe.sh  # 兼容入口，转调 run_with_probe.sh gemma3_pretrain
+├── source_bridge_env.sh              # 加载 Bridge env.sh 的辅助函数
+├── profiles/                         # 每个 Bridge 例子一个 profile，只声明差异
+│   ├── _common.sh                    # 所有 profile 共享的默认值
+│   ├── gemma3_pretrain.sh
+│   ├── gemma4_pretrain.sh
+│   ├── glm52_pretrain.sh  glm52_sft.sh  glm53_pretrain.sh
+│   ├── minimax_m3_pretrain.sh
+│   ├── qwen35_text_pretrain.sh  qwen35_vl_pretrain.sh  qwen38_2_4t_pretrain.sh
+│   └── deepseek_v4_flash_pretrain.sh  deepseek_v4_flash_sft.sh  deepseek_v4_pro_pretrain.sh
+├── config/                           # 按模型规模分档的 probe 配置模板
+│   ├── L0_small.json
+│   ├── L0_moe_rank0.json
+│   ├── L1_small.json
+│   └── monitor_only.json
+├── inject_weight_perturbation.py     # 人为偏差验证脚本
+└── README.md
 ```
 
 ---
 
-## 配置说明
+## 快速开始
 
-### 环境变量
+### 1. 准备 probe 配置
+
+按模型规模选一档，复制后把路径改成**绝对路径**：
+
+| 规模 | 用哪档 | 说明 |
+|---|---|---|
+| 小模型（gemma3 1B、gemma4 E4B） | `config/L0_small.json` | 全部 rank、step 0-2 |
+| MoE 中大模型（glm5x、minimax、qwen35、deepseek flash） | `config/L0_moe_rank0.json` | 只 dump rank 0 的 step 0，控制存储 |
+| 只想看单步、要 API 级 | `config/L1_small.json` | L1，step 0 |
+| 超大模型（qwen38 2.4T、deepseek pro） | `config/monitor_only.json` | 只开 monitor，先看曲线 |
+
+```bash
+cd /public/home/tangwsh/myproject/hcu_probe-das/examples/megatron_bridge
+mkdir -p /public/home/tangwsh/probe_output
+
+cp config/L0_small.json /public/home/tangwsh/probe_output/L0.json
+python - <<'EOF'
+import json
+p = "/public/home/tangwsh/probe_output/L0.json"
+cfg = json.load(open(p))
+cfg["dump_path"] = "/public/home/tangwsh/probe_output/L0_small"
+json.dump(cfg, open(p, "w"), indent=2)
+EOF
+
+cp config/monitor_only.json /public/home/tangwsh/probe_output/monitor.json
+python - <<'EOF'
+import json
+p = "/public/home/tangwsh/probe_output/monitor.json"
+cfg = json.load(open(p))
+cfg["output_dir"] = "/public/home/tangwsh/probe_output/monitor"
+json.dump(cfg, open(p, "w"), indent=2)
+EOF
+```
+
+### 2. 运行
+
+```bash
+export MEGATRON_PATH=/public/home/tangwsh/myproject/Megatron-bridge-das
+export HCU_PROBE_CONFIG=/public/home/tangwsh/probe_output/L0.json
+export HCU_PROBE_MONITOR_CONFIG=/public/home/tangwsh/probe_output/monitor.json
+
+# gemma3 是唯一已验证的 profile
+LOCAL_HF_PATH=/path/to/gemma-3-1b-it ./run_with_probe.sh gemma3_pretrain "" dryrun
+LOCAL_HF_PATH=/path/to/gemma-3-1b-it TRAIN_ITERS=5 ./run_with_probe.sh gemma3_pretrain "" train
+```
+
+---
+
+## 调用方式
+
+```bash
+./run_with_probe.sh <profile> [recipe] [mode] [hostfile] [nodes]
+```
+
+| 参数 | 说明 |
+|---|---|
+| `profile` | `profiles/` 下的文件名（去掉 `.sh`），见下表 |
+| `recipe` | recipe 名；留空用 profile 的默认值 |
+| `mode` | `dryrun`（只解析配置）/ `train` / `sft`；默认 `train` |
+| `hostfile` | 多机时的主机列表 |
+| `nodes` | 节点数，需要 hostfile |
+
+兼容入口 `train_gemma3_pretrain_with_probe.sh` 等价于 `run_with_probe.sh gemma3_pretrain`，老命令不用改。
+
+### Profile 一览
+
+| Profile | 模型 | 规模 | 状态 |
+|---|---|---|---|
+| `gemma3_pretrain` | Gemma 3 1B | 1 节点 × 8 | **已验证** |
+| `gemma4_pretrain` | Gemma 4 E4B | 2 节点 × 8 | 未验证 |
+| `glm52_pretrain` | GLM-5.2（MoE） | 4 节点 × 8 | 未验证 |
+| `glm52_sft` | GLM-5.2 SFT（MoE） | 4 节点 × 8 | 未验证 |
+| `glm53_pretrain` | GLM-5.3（MoE） | 4 节点 × 8 | 未验证 |
+| `minimax_m3_pretrain` | MiniMax-M3（MoE） | 2 节点（test）/ 32 节点 | 未验证 |
+| `qwen35_text_pretrain` | Qwen3.5-35B-A3B（MoE） | 4 节点 × 8 | 未验证 |
+| `qwen35_vl_pretrain` | Qwen3.5-VL 2B/4B/9B | 1 节点 × 8 | 未验证 |
+| `qwen38_2_4t_pretrain` | Qwen3.8-2.4T-A95B（MoE） | 16 节点 × 8（test） | 未验证、资源重 |
+| `deepseek_v4_flash_pretrain` | DeepSeek-V4-Flash（MoE） | 4 节点（test）/ 16 节点 | 未验证 |
+| `deepseek_v4_flash_sft` | DeepSeek-V4-Flash SFT（MoE） | 4 节点（test）/ 16 节点 | 未验证 |
+| `deepseek_v4_pro_pretrain` | DeepSeek-V4-Pro（MoE） | 8 节点（test）/ 32 节点 | 未验证、资源重 |
+
+**未验证的 profile 默认拒绝启动**，需要显式确认：
+
+```bash
+PROBE_ALLOW_UNVERIFIED=1 ./run_with_probe.sh glm52_pretrain glm52_pretrain_32gpu_bw1000_bf16_test_config dryrun
+```
+
+这些 profile 是照着 `Megatron-bridge-das/examples/<family>/train_*.sh` 逐项抄过来的 recipe、模型路径、并行度和 CONFIG 覆盖，但没有在本 fork 上跑通过，第一次使用请先 `dryrun`，再小步数 `train`。
+
+---
+
+## 环境变量
 
 | 变量 | 必需 | 说明 |
 |---|---|---|
 | `MEGATRON_PATH` | 是 | Megatron-bridge-das 根目录 |
-| `HCU_PROBE_CONFIG` | 否 | dump 配置文件绝对路径；不设置则不开启 dump |
-| `HCU_PROBE_MONITOR_CONFIG` | 否 | monitor 配置文件绝对路径；不设置则不开启 monitor |
-| `HCU_PROBE_SEED` | 否 | 固定随机种子（整数） |
-| `HCU_PROBE_REPRODUCE` | 否 | 设为 1 开启确定性模式（关闭 dropout） |
+| `LOCAL_HF_PATH` | 是 | 本地 HF 权重目录；profile 里给的是占位路径 |
+| `HCU_PROBE_CONFIG` | 否 | dump 配置；不设置则不开启 dump |
+| `HCU_PROBE_MONITOR_CONFIG` | 否 | monitor 配置；不设置则不开启 monitor |
+| `HCU_PROBE_SEED` | 否 | 固定随机种子 |
+| `HCU_PROBE_REPRODUCE` | 否 | 设为 1 开启确定性模式 |
+| `HCU_PROBE_STRICT` | 否 | 设为 1 时 probe 初始化失败直接退出 |
+| `PROBE_ALLOW_UNVERIFIED` | 否 | 设为 1 才允许跑未验证的 profile |
+| `TRAIN_ITERS` / `GLOBAL_BATCH_SIZE` / `MICRO_BATCH_SIZE` | 否 | 覆盖 profile 默认值 |
+| `TENSOR_PARALLEL` / `PIPELINE_PARALLEL` / `EXPERT_PARALLEL` / `EXPERT_TENSOR_PARALLEL` / `CONTEXT_PARALLEL` | 否 | 覆盖 profile 并行度 |
+| `SEQ_LENGTH` | 否 | 覆盖序列长度 |
+| `GPUS` | 否 | 每节点卡数，默认 8 |
+| `MASTER_PORT` | 否 | 覆盖 rendezvous 端口 |
 
-### 启动脚本参数
-
-```bash
-./train_gemma3_pretrain_with_probe.sh <recipe> <mode> [hostfile] [nodes]
-```
-
-- `<recipe>`：`gemma3_1b_pretrain_8gpu_bw1000_bf16_config`
-- `<mode>`：`dryrun` 或 `train`
-- `[hostfile]`：多机时的主机列表文件
-- `[nodes]`：使用多少个节点（多机时必需）
-
-可覆盖的环境变量：
-- `TRAIN_ITERS=5`：训练步数（默认 50）
-- `GPUS=8`：每节点 GPU 数
-- `TENSOR_PARALLEL=1`、`PIPELINE_PARALLEL=1`、`CONTEXT_PARALLEL=1`
-
-### 配置文件内容
-
-**dump 配置** (`L0.json` / `L1.json`)：
-- `task`：`statistics`（统计量）或 `tensor`（完整张量）
-- `dump_path`：**必须是绝对路径**
-- `level`：`L0`（模块级）、`L1`（API 级）、`mix`（两者）
-- `step`：`[0, 1, 2]` 或 `[]`（所有步）
-- `rank`：`[0]` 或 `[]`（所有卡）
-
-**monitor 配置** (`monitor.json`)：
-- `output_dir`：**必须是绝对路径**
-- `patch_optimizer_step`：**必须为 `false`**（Megatron 嵌套优化器导致自动 patch 失效）
-- `monitors`：开启 `weight_grad`、`optimizer`、`param` 等
+profile 里的环境变量（如 `GEMMA4_CONVERSION_MODE=text`、`NVTE_USE_HIPBLASLT_GROUPEDGEMM=1`）由 `PROFILE_EXPORTS` 声明，启动时统一 export。
 
 ---
 
 ## 启动前检查（自动）
 
-脚本会在启动前检查：
+配置了 probe 时，脚本会在启动前检查：
 
-1. 配置文件是否存在
-2. 配置文件是否是合法 JSON
-3. `matplotlib`、`tensorboard` 是否已安装
-4. `hcuprobe.pytorch` 是否可导入
+1. 配置文件存在且是合法 JSON
+2. `matplotlib`、`tensorboard` 已安装
+3. `hcuprobe.pytorch` 可导入
 
-检查失败时会立即退出并提示错误。
+任意一项失败立即退出，不会白跑 8 卡训练。
+
+另外 launcher 会把配置**内部**的 `dump_path` / `output_dir` 按启动目录转成绝对路径再写入临时文件，避免 Bridge `chdir` 后输出落到意外位置，原配置文件不被修改。
 
 ---
 
-## Strict 模式
+## 输出位置
 
-默认情况下，probe 初始化失败时会打印错误但继续训练。要让初始化失败时立即退出：
+- **dump**：`<dump_path>/step<N>/rank<ID>/dump.json`（模板里的 `dump_path`）
+- **monitor**：`<output_dir>/` 下的 CSV（模板里的 `output_dir`）
+- **loss 记录**：`<dump_path>/loss_tracking/`，没有 dump 时落在 monitor 的 `output_dir` 下
+- **训练日志 / tensorboard / 解析后的 yaml**：`examples/megatron_bridge/<profile>_<recipe>_tp.._pp.._ep.._cp../`
 
-```bash
-export HCU_PROBE_STRICT=1
-# 或在启动脚本中加 --hcu-probe-strict（需要先手动传递到 launcher）
-```
+启动横幅会打印解析后的绝对输出目录。
 
 ---
 
 ## 多机运行
 
-创建 hostfile（每行一个主机名或 IP）：
-
-```text
+```bash
+cat > hostfile <<'EOF'
 node1
 node2
+node3
+node4
+EOF
+
+LOCAL_HF_PATH=/path/to/GLM-5.2 \
+HCU_PROBE_CONFIG=/public/.../L0_moe.json \
+PROBE_ALLOW_UNVERIFIED=1 \
+./run_with_probe.sh glm52_pretrain glm52_pretrain_32gpu_bw1000_bf16_test_config train hostfile 4
 ```
 
-然后运行：
-
-```bash
-./train_gemma3_pretrain_with_probe.sh gemma3_1b_pretrain_8gpu_bw1000_bf16_config train hostfile 2
-```
-
-环境变量 `HCU_PROBE_CONFIG` 和 `HCU_PROBE_MONITOR_CONFIG` 会自动通过 mpirun `-x` 下发到所有节点。
-
-**输出目录**：
-- 如果输出路径在共享存储（如 `/public/home/...`），所有节点写到同一目录，按 `rank*` 区分。
-- 如果是本地路径，每个节点各自落盘，需要分别登录查看。
+`HCU_PROBE_CONFIG`、`HCU_PROBE_MONITOR_CONFIG`、`HCU_PROBE_SEED/REPRODUCE/STRICT` 都会通过 `mpirun -x` 下发到所有节点。多机时输出目录要放在共享存储上，否则每个节点各写各的。
 
 ---
 
-## 人为偏差验证（测试 hcu_probe 能否检测到已知扰动）
+## 人为偏差验证
 
-### 步骤
-
-1. **baseline 训练**：跑 1 step，生成 baseline dump
+验证 hcu_probe 真的能发现已知偏差，而不是只验证正常路径。
 
 ```bash
-export HCU_PROBE_CONFIG=/tmp/my_L0.json
-export HCU_PROBE_MONITOR_CONFIG=  # 关闭 monitor 加快速度
-TRAIN_ITERS=1 ./train_gemma3_pretrain_with_probe.sh gemma3_1b_pretrain_8gpu_bw1000_bf16_config train
-mv /public/home/tangwsh/probe_output/statistics_L0 /tmp/baseline_dump
-```
+# 1. baseline：跑 1 step
+HCU_PROBE_CONFIG=/public/.../L0.json TRAIN_ITERS=1 \
+  ./run_with_probe.sh gemma3_pretrain "" train
+mv /public/.../L0_small /tmp/baseline_dump
 
-2. **注入扰动**：在 Megatron-Bridge 代码中找到 `model.module.decoder.layers[0].self_attention.linear_qkv.weight`，乘以 1.01（或直接在 `forward_step` 里临时修改）。
+# 2. 注入扰动：单层权重 ×1.01（在 Bridge 的 forward_step 或 monkey patch 里改）
 
-   如果不想改 Bridge 代码，可以用 monkey patch：在 `train_gemma3_pretrain_with_probe.sh` 的 `source_bridge_env` 后加：
+# 3. perturbed：相同配置再跑 1 step
+HCU_PROBE_CONFIG=/public/.../L0.json TRAIN_ITERS=1 \
+  ./run_with_probe.sh gemma3_pretrain "" train
+mv /public/.../L0_small /tmp/perturbed_dump
 
-   ```python
-   python -c "
-   import sys
-   sys.path.insert(0, '${MEGATRON_PATH}/3rdparty/Megatron-Bridge/src')
-   # 在这里写 monkey patch 逻辑注入 1.01 扰动
-   "
-   ```
-
-3. **perturbed 训练**：用相同配置再跑 1 step
-
-```bash
-TRAIN_ITERS=1 ./train_gemma3_pretrain_with_probe.sh gemma3_1b_pretrain_8gpu_bw1000_bf16_config train
-mv /public/home/tangwsh/probe_output/statistics_L0 /tmp/perturbed_dump
-```
-
-4. **验证检测**：
-
-```bash
+# 4. 比对
 python inject_weight_perturbation.py /tmp/baseline_dump /tmp/perturbed_dump --layer layers.0
 ```
 
-预期输出：`✓ PASS: hcu_probe successfully detected the injected perturbation`
+预期输出 `✓ PASS: hcu_probe successfully detected the injected perturbation`。
 
 ---
 
 ## 已知限制
 
-- **输出路径必须是绝对路径**：相对路径会在 Bridge `chdir` 后落到意外位置。
-- **monitor 的 `patch_optimizer_step` 必须为 `false`**：Megatron 的 `DistributedOptimizer` → `ChainedOptimizer` 嵌套导致自动 patch 失效。
-- **PP（流水线并行）场景**：`model` 可能是列表，目前 callback 只传 `context.model`，若 Bridge 把列表放在别处需要适配。
-- **仅支持 pretrain**：finetune 应该也能用（内部调用 pretrain），但未充分测试。
+1. **输出路径必须是绝对路径**。相对路径会按启动目录解析（launcher 已处理），但写绝对路径最不容易出错。
+2. **monitor 的 `patch_optimizer_step` 必须为 `false`**。Megatron 的 `DistributedOptimizer` → `ChainedOptimizer` 嵌套会让上游自动 patch 失效，hcu_probe 在 `on_step_end` 里手动推进 `mon.step()`。
+3. **SFT 例子（`glm52_sft`、`deepseek_v4_flash_sft`）走 Bridge 的 `finetune()` 路径**，overlay 只重绑了文档提到的转发点，没有实机验证过。
+4. **DeepSeek-V4-Flash 需要在 Bridge 里先切 Megatron-LM 到 `dev` 分支**（原脚本会执行 `scripts/switch_mcore.sh dev`），脚本未自动做这一步。
+5. **VL 例子（qwen35_vl）的模块命名**与纯文本不同，第一次 L0 dump 后先确认 layer 名字再写 compare 规则。
+6. **超大模型（qwen38 2.4T、deepseek pro）不要用 `L0_small.json`**，全 rank 全步数的统计量会把共享存储打满。
 
 ---
 
@@ -197,53 +232,39 @@ python inject_weight_perturbation.py /tmp/baseline_dump /tmp/perturbed_dump --la
 
 ### probe 初始化失败但训练继续
 
-**现象**：日志里有 `[hcu_probe.dump] PrecisionDebugger init failed: No module named 'matplotlib'`，但训练照常跑。
+日志里出现 `[hcu_probe.dump] PrecisionDebugger init failed: ...` 时，训练会继续但没有任何数据。安装依赖并开启 strict：
 
-**原因**：lifecycle.py 捕获异常后只打日志。
-
-**解决**：
-1. 安装依赖：`pip install matplotlib tensorboard`
-2. 开启 strict 模式：`export HCU_PROBE_STRICT=1`
+```bash
+pip install matplotlib tensorboard
+export HCU_PROBE_STRICT=1
+```
 
 ### 找不到输出目录
 
-**现象**：启动目录下没有 `hcu_probe_dump/`，也不在 `/tmp` 下。
+先看启动横幅打印的 `Dump output` / `Monitor output`。如果没打印，说明 `on_train_start` 没触发，检查日志里有没有 `hcu_probe Megatron-Bridge Integration` 这段横幅。
 
-**位置**：在 `${MEGATRON_PATH}/3rdparty/Megatron-Bridge/` 下（Bridge 会 `chdir` 到那里）。
+### 未验证 profile 直接退出
 
-**根本解决**：配置文件里的 `dump_path` 和 `output_dir` 改成绝对路径。launcher 会自动把相对路径转成绝对路径（相对于配置文件所在目录）。
-
-### 启动时报 "config file not found"
-
-检查：
-```bash
-echo $HCU_PROBE_CONFIG
-ls -l $HCU_PROBE_CONFIG
-```
-
-如果路径包含 `~`，要么展开成绝对路径，要么确保 shell 会展开（不要用单引号）。
+这是预期行为。先 `dryrun` 确认配置能解析，再加 `PROBE_ALLOW_UNVERIFIED=1` 跑训练。
 
 ---
 
-## 文件说明
+## 新增一个 profile
 
-| 文件 | 说明 |
-|---|---|
-| `train_gemma3_pretrain_with_probe.sh` | 主启动脚本，支持 dryrun/train、单机/多机 |
-| `source_bridge_env.sh` | 加载 Bridge 环境变量的辅助函数（避免污染 hcu_probe launcher） |
-| `inject_weight_perturbation.py` | 人为偏差验证脚本，比对两次 dump 检测扰动 |
-| `README.md` | 本文件 |
-
-配置模板在 `hcu_probe-das/.claude/skills/hcu_probe-megatron-integration/config/`。
+1. 读 `Megatron-bridge-das/examples/<family>/train_*.sh`，抄下 `SUPPORTED_RECIPES`、`LOCAL_HF_PATH`、`MASTER_PORT`、并行度、`DATA_CONFIG`/`TRAIN_CONFIG`/`MODEL_CONFIG`。
+2. 在 `profiles/` 下新建文件，复用 `_common.sh` 的默认值，只写差异；recipe 相关的分支用 `profile_configure()`。
+3. `PROFILE_VERIFIED=false`，在文件头注明来源脚本和状态。
+4. 在 README 的 Profile 一览表里加一行。
+5. 按"快速开始"跑一次 dryrun，确认没有报错。
 
 ---
 
 ## 实现原理
 
-1. **launcher 替换 run_recipe.py**：`train_gemma3_pretrain_with_probe.sh` 调用 `hcuprobe.integrations.megatron_bridge.launcher`，它最后调用 Bridge 的 `run_recipe.main()`。
-2. **overlay 包装 pretrain**：launcher 在 import `run_recipe` 后执行 `install()`，把 `megatron.bridge.training.pretrain.pretrain` 替换成薄包装，自动追加 `HCUProbeCallback`。
-3. **callback 翻译事件**：`HCUProbeCallback` 把 Bridge 的 `on_train_start` 等事件翻译成 `hcuprobe.integrations.megatron` 的生命周期调用。
-4. **可还原**：`uninstall()` 恢复原始 pretrain 函数。
+1. **launcher 替换 `run_recipe.py`**：`run_with_probe.sh` 调用 `hcuprobe.integrations.megatron_bridge.launcher`，后者最后调用 Bridge 的 `run_recipe.main()`。
+2. **overlay 包装 `pretrain`**：launcher 在 import `run_recipe` 后执行 `install()`，把 `megatron.bridge.training.pretrain.pretrain` 替换为薄包装，自动追加 `HCUProbeCallback`。
+3. **callback 翻译事件**：`HCUProbeCallback` 把 Bridge 的 `on_train_start` / `on_train_step_start` / `on_train_step_end` / `on_train_end` 翻译成 `hcuprobe.integrations.megatron` 的生命周期调用。
+4. **可还原**：`uninstall()` 恢复原始 `pretrain`。
 
 Bridge 仓库始终不被修改。
 
@@ -253,3 +274,4 @@ Bridge 仓库始终不被修改。
 
 - hcu_probe Megatron 集成文档：`hcu_probe-das/docs_hcu/zh/user_guide/megatron_bridge_instruct.md`
 - 项目整体指南：`hcu_probe/CLAUDE.md`、`hcu_probe/docs/integration_guide.md`
+- Bridge 原始例子：`Megatron-bridge-das/examples/`

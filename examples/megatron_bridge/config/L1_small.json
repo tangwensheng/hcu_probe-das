@@ -1,0 +1,14 @@
+{
+  "task": "statistics",
+  "dump_path": "/absolute/path/to/probe_output/L1_small",
+  "rank": [],
+  "step": [0],
+  "level": "L1",
+  "async_dump": false,
+  "statistics": {
+    "scope": [],
+    "list": [],
+    "data_mode": ["all"],
+    "summary_mode": "statistics"
+  }
+}
