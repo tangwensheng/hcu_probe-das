@@ -64,6 +64,7 @@ DUMP_CONFIG_FLAGS = _flag_names("--hcu-probe-config")
 MONITOR_CONFIG_FLAGS = _flag_names("--hcu-probe-monitor-config")
 SEED_FLAGS = _flag_names("--hcu-probe-seed")
 REPRODUCE_FLAGS = _flag_names("--hcu-probe-reproduce")
+STRICT_FLAGS = _flag_names("--hcu-probe-strict")
 
 _VALUE_FLAGS = {
     **{flag: "bridge_root" for flag in BRIDGE_ROOT_FLAGS},
@@ -71,7 +72,10 @@ _VALUE_FLAGS = {
     **{flag: "monitor_config" for flag in MONITOR_CONFIG_FLAGS},
     **{flag: "seed" for flag in SEED_FLAGS},
 }
-_BOOL_FLAGS = {flag: "reproduce" for flag in REPRODUCE_FLAGS}
+_BOOL_FLAGS = {
+    **{flag: "reproduce" for flag in REPRODUCE_FLAGS},
+    **{flag: "strict" for flag in STRICT_FLAGS},
+}
 
 
 def _parse_argv(argv: List[str]) -> Tuple[Dict[str, object], List[str]]:
@@ -218,17 +222,26 @@ def _export_options(options: Dict[str, object]) -> None:
 
     Absolute paths are required because ``run_recipe.main()`` changes the
     working directory to the Bridge checkout before training starts.
+
+    Configs with relative output paths are rewritten to absolute paths while
+    the launch directory is still the current working directory.
     """
+    from hcuprobe.integrations._common.config import rewrite_config_output_paths_to_absolute
+
+    launch_dir = os.getcwd()
+
     if "dump_config" in options:
-        os.environ[ENV_DUMP_CONFIG] = os.path.abspath(os.path.expanduser(str(options["dump_config"])))
+        abs_path = os.path.abspath(os.path.expanduser(str(options["dump_config"])))
+        os.environ[ENV_DUMP_CONFIG] = rewrite_config_output_paths_to_absolute(abs_path, base_dir=launch_dir)
     if "monitor_config" in options:
-        os.environ[ENV_MONITOR_CONFIG] = os.path.abspath(
-            os.path.expanduser(str(options["monitor_config"]))
-        )
+        abs_path = os.path.abspath(os.path.expanduser(str(options["monitor_config"])))
+        os.environ[ENV_MONITOR_CONFIG] = rewrite_config_output_paths_to_absolute(abs_path, base_dir=launch_dir)
     if "seed" in options:
         os.environ[ENV_SEED] = str(options["seed"])
     if options.get("reproduce"):
         os.environ[ENV_REPRODUCE] = "1"
+    if options.get("strict"):
+        os.environ[ENV_STRICT] = "1"
 
 
 def main(argv: Optional[List[str]] = None) -> None:

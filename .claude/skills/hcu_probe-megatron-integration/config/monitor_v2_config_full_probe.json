@@ -1,6 +1,6 @@
 {
   "framework": "pytorch",
-  "output_dir": "./hcu_probe_dump/monitor_v2",
+  "output_dir": "/absolute/path/to/probe_output/monitor_v2",
   "format": "csv",
   "patch_optimizer_step": false,
   "monitors": {

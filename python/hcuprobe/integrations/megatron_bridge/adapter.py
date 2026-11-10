@@ -48,6 +48,7 @@ ENV_DUMP_CONFIG = "HCU_PROBE_CONFIG"
 ENV_MONITOR_CONFIG = "HCU_PROBE_MONITOR_CONFIG"
 ENV_SEED = "HCU_PROBE_SEED"
 ENV_REPRODUCE = "HCU_PROBE_REPRODUCE"
+ENV_STRICT = "HCU_PROBE_STRICT"
 
 _TRUTHY = {"1", "true", "yes", "on", "y", "t"}
 
@@ -90,6 +91,7 @@ class HCUProbeOptions:
     monitor_config: Optional[str] = None
     seed: Optional[int] = None
     reproduce: bool = False
+    strict: bool = False
 
     @classmethod
     def from_env(cls, env: Optional[Mapping[str, str]] = None) -> "HCUProbeOptions":
@@ -99,6 +101,7 @@ class HCUProbeOptions:
             monitor_config=_clean_path(env.get(ENV_MONITOR_CONFIG)),
             seed=_to_int(env.get(ENV_SEED)),
             reproduce=_to_bool(env.get(ENV_REPRODUCE)),
+            strict=_to_bool(env.get(ENV_STRICT)),
         )
 
     @property
@@ -208,13 +211,51 @@ class HCUProbeCallback(Callback):
 
     def on_train_start(self, context: CallbackContext) -> None:
         """Fires after model/optimizer setup, before the training loop."""
+        from .._common.config import get_dump_output_dir_from_cfg, get_monitor_output_dir_from_cfg
+        from .._common.lifecycle import get_dump_lifecycle, get_monitor_lifecycle
+
         args = self._build_args(context)
+        options = self._options()
+
+        dump_out = get_dump_output_dir_from_cfg(args.hcu_probe_config) if args.hcu_probe_config else None
+        monitor_out = (
+            get_monitor_output_dir_from_cfg(args.hcu_probe_monitor_config)
+            if args.hcu_probe_monitor_config
+            else None
+        )
+
+        banner = [
+            "=" * 70,
+            "hcu_probe Megatron-Bridge Integration",
+            f"  Dump config:    {args.hcu_probe_config or '<disabled>'}",
+            f"  Dump output:    {dump_out or '<not set>'}",
+            f"  Monitor config: {args.hcu_probe_monitor_config or '<disabled>'}",
+            f"  Monitor output: {monitor_out or '<not set>'}",
+            f"  Strict mode:    {options.strict}",
+            "=" * 70,
+        ]
+        print("\n".join(banner))
+
         dump.on_train_start(args)
         monitor.on_setup_done(
             getattr(context, "model", None),
             getattr(context, "optimizer", None),
             args,
         )
+
+        # The lifecycles swallow their own errors and leave the handle as None,
+        # so strict mode has to check the resulting state, not rely on raises.
+        failures = []
+        if args.hcu_probe_config and get_dump_lifecycle().debugger is None:
+            failures.append("dump (PrecisionDebugger not initialized)")
+        if args.hcu_probe_monitor_config and get_monitor_lifecycle().monitor is None:
+            failures.append("monitor (TrainerMonitorV2 not started)")
+
+        if failures:
+            message = "hcu_probe failed to start: " + ", ".join(failures)
+            print(f"ERROR: {message}. See the [hcu_probe.*] lines above for the cause.")
+            if options.strict:
+                raise SystemExit(message)
 
     def on_train_step_start(self, context: CallbackContext) -> None:
         args = self._build_args(context)

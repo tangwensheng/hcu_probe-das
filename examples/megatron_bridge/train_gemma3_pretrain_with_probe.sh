@@ -115,6 +115,9 @@ fi
 if [[ -n "${HCU_PROBE_REPRODUCE:-}" ]]; then
     PROBE_ARGS+=(--hcu-probe-reproduce)
 fi
+if [[ -n "${HCU_PROBE_STRICT:-}" ]]; then
+    PROBE_ARGS+=(--hcu-probe-strict)
+fi
 
 LAUNCH_ARGS=(
     --bridge-root "${MEGATRON_PATH}"
@@ -135,6 +138,28 @@ echo "Dump cfg:      ${HCU_PROBE_CONFIG:-<disabled>}"
 echo "Monitor cfg:   ${HCU_PROBE_MONITOR_CONFIG:-<disabled>}"
 echo "Master:    ${MASTER_ADDR}:${MASTER_PORT}"
 echo "======================================"
+
+# Startup checks: verify configs, dependencies and JSON validity
+if [[ -n "${HCU_PROBE_CONFIG:-}" ]]; then
+    [[ -f "${HCU_PROBE_CONFIG}" ]] || { echo "ERROR: HCU_PROBE_CONFIG file not found: ${HCU_PROBE_CONFIG}"; exit 1; }
+    python -m json.tool "${HCU_PROBE_CONFIG}" >/dev/null || { echo "ERROR: HCU_PROBE_CONFIG is not valid JSON: ${HCU_PROBE_CONFIG}"; exit 1; }
+fi
+if [[ -n "${HCU_PROBE_MONITOR_CONFIG:-}" ]]; then
+    [[ -f "${HCU_PROBE_MONITOR_CONFIG}" ]] || { echo "ERROR: HCU_PROBE_MONITOR_CONFIG file not found: ${HCU_PROBE_MONITOR_CONFIG}"; exit 1; }
+    python -m json.tool "${HCU_PROBE_MONITOR_CONFIG}" >/dev/null || { echo "ERROR: HCU_PROBE_MONITOR_CONFIG is not valid JSON: ${HCU_PROBE_MONITOR_CONFIG}"; exit 1; }
+fi
+if [[ -n "${HCU_PROBE_CONFIG:-}" ]] || [[ -n "${HCU_PROBE_MONITOR_CONFIG:-}" ]]; then
+    python -c "import matplotlib, tensorboard" 2>/dev/null || {
+        echo "ERROR: hcu_probe dependencies missing. Install with:"
+        echo "  pip install matplotlib tensorboard"
+        exit 1
+    }
+    python -c "from hcuprobe.pytorch import PrecisionDebugger" 2>/dev/null || {
+        echo "ERROR: hcuprobe.pytorch not importable. Check PYTHONPATH."
+        exit 1
+    }
+    echo "✓ Config files valid, dependencies installed"
+fi
 
 case "${MODE}" in
     dryrun)
