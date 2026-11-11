@@ -143,7 +143,9 @@ PROBE_ALLOW_UNVERIFIED=1 ./run_with_probe.sh glm52_pretrain glm52_pretrain_32gpu
 | `GPUS` | 否 | 每节点卡数，默认 8 |
 | `MASTER_PORT` | 否 | 覆盖 rendezvous 端口 |
 
-profile 里的环境变量（如 `GEMMA4_CONVERSION_MODE=text`、`NVTE_USE_HIPBLASLT_GROUPEDGEMM=1`）由 `PROFILE_EXPORTS` 声明，启动时统一 export。
+profile 里的环境变量（如 `GEMMA4_CONVERSION_MODE=text`、`NVTE_USE_HIPBLASLT_GROUPEDGEMM=1`）由 `PROFILE_EXPORTS` 数组声明，启动时统一 export，多机时通过 `mpirun -x` 下发到所有节点。值里有空格时整项加引号，例如 `PROFILE_EXPORTS+=("MOCK_PROMPT=Describe this image.")`。
+
+`LOCAL_HF_PATH` 必须是 HuggingFace 格式（`config.json` + `*.safetensors`）的目录，GGUF 等量化格式 Bridge 无法加载。
 
 ---
 

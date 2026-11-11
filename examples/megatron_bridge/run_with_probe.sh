@@ -166,8 +166,11 @@ if [[ -z "${LOCAL_HF_PATH}" ]]; then
 fi
 
 # Profile-specific environment (tokenizer options, queue counts, ...).
-for export_line in ${PROFILE_EXPORTS:-}; do
-    [[ -n "${export_line}" ]] && export "${export_line}"
+EXPORT_FORWARD_ARGS=()
+for export_line in ${PROFILE_EXPORTS[@]+"${PROFILE_EXPORTS[@]}"}; do
+    [[ -n "${export_line}" ]] || continue
+    export "${export_line}"
+    EXPORT_FORWARD_ARGS+=(-x "${export_line%%=*}")
 done
 
 SAVE_DIR=${SAVE_DIR:-${CURRENT_DIR}/${PROFILE}_${RECIPE}_tp${TP}_pp${PP}_ep${EP}_cp${CP}}
@@ -309,6 +312,7 @@ case "${MODE}" in
                 -x PATH -x LD_LIBRARY_PATH -x LOCAL_HF_PATH \
                 -x HCU_PROBE_CONFIG -x HCU_PROBE_MONITOR_CONFIG \
                 -x HCU_PROBE_SEED -x HCU_PROBE_REPRODUCE -x HCU_PROBE_STRICT \
+                ${EXPORT_FORWARD_ARGS[@]+"${EXPORT_FORWARD_ARGS[@]}"} \
                 -x MASTER_ADDR="${MASTER_ADDR}" -x MASTER_PORT="${MASTER_PORT}" \
                 bash -c "
                 source /opt/dtk/env.sh && \

@@ -11,9 +11,9 @@ PROFILE_BRIDGE_MODE=pretrain
 PROFILE_RECIPES=()
 
 PROFILE_LOCAL_HF_PATH=""
-# Space-separated KEY=VALUE pairs exported verbatim, e.g.
-#   PROFILE_EXPORTS="GEMMA4_CONVERSION_MODE=text GPU_MAX_HW_QUEUES=4"
-PROFILE_EXPORTS=""
+# Array of KEY=VALUE entries exported on every rank; quote values with spaces, e.g.
+#   PROFILE_EXPORTS=(GPU_MAX_HW_QUEUES=4 "MOCK_PROMPT=Describe this image.")
+PROFILE_EXPORTS=()
 # Extra entries prepended to PYTHONPATH on every rank.
 PROFILE_EXTRA_PYTHONPATH=""
 
