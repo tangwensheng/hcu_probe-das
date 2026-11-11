@@ -233,6 +233,40 @@ check_probe_config() {
         || { echo "ERROR: ${label} is not valid JSON: ${path}" >&2; exit 1; }
 }
 
+# Bridge loads config.json for the model and tokenizer_config.json /
+# tokenizer.json / preprocessor_config.json for the tokenizer and processor.
+# A truncated download makes AutoTokenizer fail deep inside rank init with
+# "Expecting value: line 1 column 1 (char 0)"; check here instead.
+check_local_hf_path() {
+    local root=$1
+    [[ -d "${root}" ]] || { echo "ERROR: LOCAL_HF_PATH is not a directory: ${root}" >&2; exit 1; }
+
+    if compgen -G "${root}/*.gguf" > /dev/null; then
+        echo "ERROR: ${root} contains GGUF files; Bridge needs HuggingFace safetensors." >&2
+        exit 1
+    fi
+    if [[ ! -f "${root}/config.json" ]]; then
+        echo "ERROR: ${root}/config.json is missing; not a HuggingFace checkpoint directory." >&2
+        exit 1
+    fi
+
+    local name
+    for name in config.json tokenizer_config.json tokenizer.json preprocessor_config.json; do
+        [[ -f "${root}/${name}" ]] || continue
+        if ! python -m json.tool "${root}/${name}" > /dev/null 2>&1; then
+            echo "ERROR: ${root}/${name} is empty or invalid JSON; the download is incomplete." >&2
+            exit 1
+        fi
+    done
+
+    if ! compgen -G "${root}/*.safetensors" > /dev/null \
+        && ! compgen -G "${root}/*.bin" > /dev/null; then
+        echo "WARNING: no *.safetensors or *.bin in ${root}; weights may fail to load." >&2
+    fi
+}
+
+check_local_hf_path "${LOCAL_HF_PATH}"
+
 if (( WANT_PROBE )); then
     [[ -n "${HCU_PROBE_CONFIG:-}" ]] && check_probe_config "${HCU_PROBE_CONFIG}" "HCU_PROBE_CONFIG"
     [[ -n "${HCU_PROBE_MONITOR_CONFIG:-}" ]] && check_probe_config "${HCU_PROBE_MONITOR_CONFIG}" "HCU_PROBE_MONITOR_CONFIG"
